@@ -1,50 +1,3 @@
-FROM alpine:3.13 as systemd-builder
-
-RUN apk add --no-cache \
-    autoconf \
-    bash \
-    cmake \
-    coreutils \
-    g++ \
-    gcc \
-    git \
-    gperf \
-    libcap-dev \
-    libseccomp-dev \
-    lz4-dev \
-    make \
-    meson \
-    musl-dev \
-    musl-libintl \
-    ninja \
-    patch \
-    util-linux-dev \
-    xz-dev
-
-ARG SYSTEMD_VERSION=v246.6
-ARG SYSTEMD_LIB_VERSION=0.29.0
-ARG OPENEMBEDDED_CORE_SHA=3325992e66e8fbd80292beb4b0ffd50beca138d8
-
-ENV CFLAGS=-Os
-WORKDIR /work/systemd
-
-RUN cd /work \
-  && git clone --depth=1 -b ${SYSTEMD_VERSION} https://github.com/systemd/systemd-stable.git systemd \
-  && git clone --depth=1000 https://github.com/openembedded/openembedded-core.git \
-  && (cd openembedded-core && git checkout ${OPENEMBEDDED_CORE_SHA}) \
-  && cp openembedded-core/meta/recipes-core/systemd/systemd/*.patch systemd/
-
-RUN ls -1 *.patch | xargs -n1 patch -p1 -i
-RUN ./configure \
-    -Dgshadow=false \
-    -Didn=false \
-    -Dutmp=false
-RUN ninja -C build libsystemd.so.${SYSTEMD_LIB_VERSION}
-RUN cp -v $(find build -name "libsystemd.so*" -type f) /usr/local/lib/
-
-RUN strip -s /usr/local/lib/libsystemd.so*
-
-
 # ===========================
 FROM golang:1.16-alpine3.13 AS agent-builder
 
@@ -103,12 +56,10 @@ RUN invoke rtloader.make \
 
 RUN strip -s /build/datadog-agent/dev/lib/*.so
 
-COPY --from=systemd-builder /work/systemd/src/systemd/ /usr/include/systemd/
-
 RUN invoke agent.build \
     --python-runtimes=3 \
     --exclude-rtloader \
-    --build-exclude=jmx,kubeapiserver,gce,ec2
+    --build-exclude=jmx,kubeapiserver,gce,ec2,systemd
 
 RUN mkdir -p /agent-bin \
   && touch /agent-bin/.keep
@@ -243,7 +194,6 @@ RUN mkdir -p \
   && touch /opt/datadog-agent/final_constraints-py3.txt \
   && ln -s /usr /opt/datadog-agent/embedded
 
-COPY --from=systemd-builder /usr/local/lib/libsystemd.so* /usr/lib/
 
 # Install datadog agent
 COPY --from=agent-builder /build/datadog-agent/Dockerfiles/agent/s6-services /etc/services.d/
